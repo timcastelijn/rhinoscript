@@ -3,6 +3,7 @@ import Rhino
 import scriptcontext as sc
 import math
 import time
+import re
 
 # V0.1
 # to install as command (alias) or keyboard shortcut, use line below and change to your script file path
@@ -32,13 +33,12 @@ def setCurveDir(objs):
     # rs.Command("Dir")
 
 def isCurveOnCPlane(obj):
-    if rs.IsCurvePlanar(obj):
-        data = rs.CurvePoints(obj)
-        for pt in data:
-            if(math.fabs( pt.Z )< 1e-8 ):
-                return True
+	data = rs.CurvePoints(obj)
+	for pt in data:
+		if(math.fabs( pt.Z )> 1e-6 ):
+			return False
 
-	return False
+	return True
 
 
 def isPointOnCplane(obj):
@@ -167,57 +167,84 @@ def simplify(objs):
     for obj in objs:
         if rs.IsCurve(obj):
             rs.SimplifyCurve(obj)
+
+def scan_layer(layer):
+
+    m = re.search(  '(\d\d.\d\d)\s'+
+                    '.+(Pocket|Engrave|Inner contour|Outer contour).+'+
+                    # '-\s(.*)\s\S*'+
+                    '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
+                , layer)
     
+    if m and len(m.groups()) == 3:
+        print 'toolID %r, operation %r, z=%r' % (m.group(1), m.group(2), m.group(3))
+        a = m.group(2)
+        b = 16          #diameter
+        c = 1           #correctie links
+        d = "NONE"      #identificatie nummer hoek
+        
+        print 'TCH[%s](SIDE)%s(DIA)12.55(CRC)%s(CRN)$%s$' % (a,b,c,d)
+    else:
+        print 'could not convert' + layer
+        # layer = rs.ComboListBox(['a', 'b'], "Select current layer")
+        # radius = rs.RealBox("Enter a radius value", 5.0 )
+
 # main script
 def main():
     
-    # create globally used array of copies
-    copies = []
-
-    # get objects to export
-    objs = rs.GetObjects("select objects to export", 0, True, True)
-    if not objs: print "checkAndExport aborted"; return
-
-    rs.EnableRedraw(False)
-
-    # create copies of all block contents
-    copies = rs.CopyObjects(objs)
-
+    # open the file
+    # filename = rs.OpenFileName()
     
-    # explodeblock
-    copies = explodeBlock(copies)
+    # if filename:
+        # with open(filename) as f:
+            # lines = f.readlines()
+            
+
+    # copies = []
+
+    # objs = rs.GetObjects("select objects to export", 0, True, True)
+    # if not objs: print "checkAndExport aborted"; return
+
+    # rs.EnableRedraw(False)
+
+    layers = rs.LayerNames()
+
+    for layer in layers: 
+        scan_layer(layer)
+
+    print 'done'
+    print "\n"
+        
     
-    copies = explodeTextObjects(copies)
+
+    # copies = explodeBlock(copies)
     
-    copies = filterObjects(copies)
+    # copies = explodeTextObjects(copies)
+    
+    # copies = filterObjects(copies)
      
-    # check curves for deviation from c-plane
-    proceed = checkCurvePosition(copies);
+    # proceed = checkCurvePosition(copies);
 
-	# if ok, start export
-    if proceed:
-        # rs.UnselectAllObjects()
+    # if proceed:
 
-        simplify(copies)
+        # simplify(copies)
             
-        setCurveDir(copies);
+        # setCurveDir(copies);
 
-		# move to origin
-        result = moveToOrigin(copies);
+        # result = moveToOrigin(copies);
 
-        if result:
+        # if result:
                     
-            # export
-            rs.SelectObjects(copies)
-            result = rs.Command("Export")
-            if result: print 'exported succesfully'
+            # rs.SelectObjects(copies)
+            # result = rs.Command("Export")
+            # if result: print 'exported succesfully'
             
-            return True
+            # return True
     
 
             
-    rs.DeleteObjects(copies)
-    rs.EnableRedraw(True)
+    # rs.DeleteObjects(copies)
+    # rs.EnableRedraw(True)
 
 
 if __name__ == "__main__":
