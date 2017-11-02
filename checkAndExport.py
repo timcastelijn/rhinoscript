@@ -1,10 +1,4 @@
-import rhinoscriptsyntax as rs
-import Rhino
-import scriptcontext as sc
-import math
-import time
-
-# V0.3
+# V0.4
 # to install as command (alias) or keyboard shortcut, use line below and change to your script file path
 
 # '_-runPythonScript "/Users/timcastelijn/Documents/programming/rhinoscript/checkAndExport.py"
@@ -12,15 +6,23 @@ import time
 # '_-runPythonScript "C:/checkAndExport.py"
 
 
+import rhinoscriptsyntax as rs
+import Rhino
+import scriptcontext as sc
+import math
+import re
+
+
 # function to reverse a curve if the normal points downwards in Z-dir
 # assumed is that only closed curves can have inside or outside 
 def setCurveDir(objs):
     rs.UnselectAllObjects()
     count = 0
+    
     for obj in objs:
-        if rs.IsCurve(obj):
-            if rs.IsCurveClosed(obj):
-                normal = rs.CurveNormal(obj)
+        if rs.IsCurve(obj) and rs.IsCurveClosed(obj):
+                
+                normal = rs.CurveNormal(obj)                
                 if normal and normal[2] < 0:
                     count += 1
                     rs.ReverseCurve(obj)
@@ -190,14 +192,14 @@ def explodeTextObjects(objs):
     
     for obj in objs:
         if rs.IsText(obj):
-            # if ("CNC" in rs.ObjectLayer(obj)):
-            # rs.GetBoolean(text, "get", True)
-            # result = rs.TextObjectFont(obj, "MecSoft_Font-1")
-            
-            polylines = rs.ExplodeText(obj, True)
-            
-            for polyline in polylines:
-                new_list.append(polyline)
+            if ("CNC" in rs.ObjectLayer(obj)):
+                # rs.GetBoolean(text, "get", True)
+                # result = rs.TextObjectFont(obj, "MecSoft_Font-1")
+                
+                polylines = rs.ExplodeText(obj, True)
+                
+                for polyline in polylines:
+                    new_list.append(polyline)
         else:
             new_list.append(obj)
             
@@ -249,17 +251,175 @@ def simplify(objs):
     for obj in objs:
         if rs.IsCurve(obj):
             rs.SimplifyCurve(obj)
+            
+def createBiesseLayer(m):
+
+    tool_table = importTools("tool_table.txt")
+    if not tool_table:
+        print 'tool table invalid, abort'
+        return False
+        
+    tool_id     = m.group(1)
+    operation   = m.group(2)
+    z_pos       = m.group(3)
     
+    str = 'TCH'
+        
+    if operation=="Drill":
+        str += '[BG]'
+    elif operation=="Saw-X" or operation=="Saw-Y":
+        str += '[CUT_G]'
+    else:
+        str += '[ROUT]'
+    
+    # workpiece side parameter, 0 by default
+    str += '(SIDE)0'
+    
+    # side of curve parameter CRC
+    # 0=center, 1=left, 2 = right, curve direction is always CCW so inside is left
+    str += '(CRC)'
+    str += {
+      'Pocket': "1",
+      'Inner contour': "1",
+      'Outer contour': "2",
+      'Engrave': "0",
+      'Drill': "0",
+      'Saw-X': "0",
+      'Saw-Y': "0",
+    }[operation]
+        
+    if operation == 'Pocket':
+        str += '(TYP)ptOUT'
+    
+    # depth parameter
+    depth = re.search( 'd(\d+\.?\d*)', z_pos)
+    if depth:
+        # workpiece top -depth, set parameter "TH" to workpiece height and use z_pos as depth
+        if not workpiece_thickness:
+            workpiece_thickness = rs.GetReal('Please ener the workpiece thickness (TH), to create depth operation')
+        
+        if workpiece_thickness:
+            str += '(DP)' + depth.group(1)
+            str += '(TH)' + workpiece_thickness
+        else:
+            print 'abort'
+            return False
+    else:
+        # workpiece bottom +depth, parameter "TH" is 0 by default and use z_pos as depth from bottom
+        str += '(DP)-' + z_pos
+    
+    # tool name paramter
+    if tool_id in tool_table and tool_table[tool_id]["TNM"]:
+        str += '(TNM)$%s$' % tool_table[tool_id]["TNM"]
+    else:
+        rs.MessageBox( 'tool_id %s not in tool table file or TNM not formatted correctly.' % (tool_id) )
+        return False
+    
+    # diameter parameter
+    # todo: is this required??
+    if tool_id in tool_table and tool_table[tool_id]["DIA"]:
+        str += '(DIA)' + tool_table[tool_id]["DIA"]
+    else:
+        rs.MessageBox( 'tool_id %s not in tool table file or DIA not formatted correctly.' %  (tool_id) )
+        return False
+    
+    return  str            
+            
+            
+            
+def convertLayers( objs ):
+
+    # first find relevant layers
+    layers = []
+    biesse_layers = []
+    for obj in objs:
+        layer_name = rs.ObjectLayer(obj)
+        if layer_name not in layers:
+            layers.append(layer_name)
+    
+    # get all layers
+    workpiece_thickness = None
+    invalid_lines = ''
+    for layer in layers:
+        # todo's
+        # - add Clamex
+        m = re.search(  '(\d\d.\d\d)\s'+
+                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y).+'+
+                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
+                    , layer)
+        
+        if m and len(m.groups()) == 3:
+            biesselayer = createBiesseLayer(m)
+            
+            # create new layer
+            if biesselayer:
+                
+                rs.AddLayer( biesselayer )
+                rs.LayerColor(biesselayer, rs.LayerColor(layer))
+                biesse_layers.append(biesselayer)
+                
+                # assign new layer to objects
+                for obj in objs:
+                    if rs.ObjectLayer(obj) == layer:
+                        rs.ObjectLayer(obj, biesselayer)
+            else:
+                return False
+        else:
+            invalid_lines += '- ' + layer + '\n'
+        
+    if len(invalid_lines)>0:
+        msg =   'layers have incorrect format and will not be converted for export:\n' + invalid_lines + '\n'
+        msg+=   'correct format is: "<xx.xx> - <operation> - <+|d><x.xx>"\n'
+        msg+=   'where operation must be "Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y"'
+                
+        rs.MessageBox(msg)
+        
+    return biesse_layers
+            
+
+def importTools(filename):
+    tool_table={}
+    invalid_lines =''
+    with open(filename) as fp: 
+        # read header
+        line = fp.readline()
+        # read first line
+        line = fp.readline()
+        cnt = 1
+        while line:
+            # print line
+            m = re.search(  '(\d\d.\d\d)\t'+
+                '(.+)\t'+
+                '(.+)'
+                , line)
+            if m and len(m.groups())>=3:
+                tool_table[m.group(1)] = {"TNM":m.group(2), "DIA":m.group(3)}
+            else:
+                invalid_lines += line +'\n'
+                
+            line = fp.readline()
+            cnt += 1
+
+        if len(invalid_lines)>0:
+            rs.MessageBox('lines could not be read, please check the tool table file:\n' + invalid_lines + '')
+            return False
+                
+        return tool_table
+        
 # main script
 def main():
     
     # create globally used array of copies
     copies = []
+    biesse_layers=[]
 
     # get objects to export
     objs = rs.GetObjects("select objects to export", 0, True, True)
     if not objs: print "checkAndExport aborted"; return
-
+    
+    # promt convert for biesse
+    convert_for_biesse = rs.GetBoolean("convert layer names for Biesseworks", (['proceed', 'no', 'yes']), (True) )
+    
     rs.EnableRedraw(False)
 
     # create copies of all block contents
@@ -285,7 +445,10 @@ def main():
             simplify(copies)
                 
             setCurveDir(copies);
-
+            
+            if convert_for_biesse :
+                biesse_layers = convertLayers(copies)
+            
             # move to origin
             result = moveToOrigin(copies);
 
@@ -297,6 +460,11 @@ def main():
                 if result: print 'exported succesfully'
             
     rs.DeleteObjects(copies)
+    
+    if len(biesse_layers)>0:
+        for layer in biesse_layers:
+            rs.PurgeLayer(layer)
+        
     rs.EnableRedraw(True)
 
 
