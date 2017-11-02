@@ -168,27 +168,147 @@ def simplify(objs):
         if rs.IsCurve(obj):
             rs.SimplifyCurve(obj)
 
-def scan_layer(layer):
+def createBiesseLayer(m):
 
-    m = re.search(  '(\d\d.\d\d)\s'+
-                    '.+(Pocket|Engrave|Inner contour|Outer contour).+'+
-                    # '-\s(.*)\s\S*'+
-                    '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
-                , layer)
-    
-    if m and len(m.groups()) == 3:
-        print 'toolID %r, operation %r, z=%r' % (m.group(1), m.group(2), m.group(3))
-        a = m.group(2)
-        b = 16          #diameter
-        c = 1           #correctie links
-        d = "NONE"      #identificatie nummer hoek
+    tool_table = importTools("tool_table.txt")
+    if not tool_table:
+        print 'tool table invalid, abort'
+        return False
         
-        print 'TCH[%s](SIDE)%s(DIA)12.55(CRC)%s(CRN)$%s$' % (a,b,c,d)
+    tool_id     = m.group(1)
+    operation   = m.group(2)
+    z_pos       = m.group(3)
+    
+    str = 'TCH'
+        
+    if operation=="Drill":
+        str += '[BG]'
+    elif operation=="Saw-X" or operation=="Saw-Y":
+        str += '[CUT_G]'
     else:
-        print 'could not convert' + layer
-        # layer = rs.ComboListBox(['a', 'b'], "Select current layer")
-        # radius = rs.RealBox("Enter a radius value", 5.0 )
+        str += '[ROUT]'
+    
+    # workpiece side parameter, 0 by default
+    str += '(SIDE)0'
+    
+    # side of curve parameter CRC
+    # 0=center, 1=left, 2 = right, curve direction is always CCW so inside is left
+    str += '(CRC)'
+    str += {
+      'Pocket': "1",
+      'Inner contour': "1",
+      'Outer contour': "2",
+      'Engrave': "0",
+      'Drill': "0",
+      'Saw-X': "0",
+      'Saw-Y': "0",
+    }[operation]
+        
+    # if operation == 'Pocket':
+        # parameters['method'] = 'remove_all' 
+    
+    # depth parameter
+    depth = re.search( 'd(\d+\.?\d*)', z_pos)
+    if depth:
+        # workpiece top -depth, set parameter "TH" to workpiece height and use z_pos as depth
+        if not workpiece_thickness:
+            workpiece_thickness = rs.GetReal('Please ener the workpiece thickness (TH), to create depth operation')
+        
+        if workpiece_thickness:
+            str += '(DP)' + depth.group(1)
+            str += '(TH)' + workpiece_thickness
+        else:
+            print 'abort'
+            return False
+    else:
+        # workpiece bottom +depth, parameter "TH" is 0 by default and use z_pos as depth from bottom
+        str += '(DP)-' + z_pos
+    
+    # tool name paramter
+    if tool_table[tool_id] and tool_table[tool_id]["TNM"]:
+        str += '(TNM)$%s$' % tool_table[tool_id]["TNM"]
+    else:
+        msg += 'tool_id %s not in tool table file or TNM not formatted correctly' % tool_id
+    
+    # diameter parameter
+    # todo: is this required??
+    if tool_table[tool_id]["DIA"] and tool_table[tool_id]["DIA"]:
+        str += '(DIA)' + tool_table[tool_id]["DIA"]
+    else:
+        msg += 'tool_id %s not in tool table file or DIA not formatted correctly' % tool_id
+    
+    return  str            
+            
+            
+            
+def convertLayers( objs ):
 
+    # first find relevant layers
+    layers = []
+    for obj in objs:
+        layer_name = rs.ObjectLayer(obj)
+        if layer_name not in layers:
+            layers.append(layer_name)
+    
+    # get all layers
+    workpiece_thickness = None
+    invalid_lines = ''
+    for layer in layers:
+
+        # todo's
+        # - add drill
+        # - add saw blade
+        
+        m = re.search(  '(\d\d.\d\d)\s'+
+                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y).+'+
+                        # '-\s(.*)\s\S*'+
+                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
+                    , layer)
+        
+        if m and len(m.groups()) == 3:
+            
+            biesselayer = rs.AddLayer( createBiesseLayer(m) )
+            for obj in objs:
+                if rs.ObjectLayer(obj) == layer:
+                    rs.ObjectLayer(obj, biesselayer)
+        else:
+            invalid_lines += '- ' + layer + '\n'
+        
+    if len(invalid_lines)>0:
+        rs.MessageBox('layers have incorrect format and will not be exported:\n' + invalid_lines + '')
+        return False
+            
+
+def importTools(filename):
+    tool_table={}
+    invalid_lines =''
+    with open(filename) as fp: 
+        # read header
+        line = fp.readline()
+        # read first line
+        line = fp.readline()
+        cnt = 1
+        while line:
+            # print line
+            m = re.search(  '(\d\d.\d\d)\t'+
+                '(.+)\t'+
+                '(.+)'
+                , line)
+            if m and len(m.groups())>=3:
+                tool_table[m.group(1)] = {"TNM":m.group(2), "DIA":m.group(3)}
+            else:
+                invalid_lines += line +'\n'
+                
+            line = fp.readline()
+            cnt += 1
+
+        if len(invalid_lines)>0:
+            rs.MessageBox('lines could not be read, please check the tool table file:\n' + invalid_lines + '')
+            return False
+                
+        return tool_table
+    
+        
 # main script
 def main():
     
@@ -201,17 +321,17 @@ def main():
             
 
     # copies = []
+    
+    
 
-    # objs = rs.GetObjects("select objects to export", 0, True, True)
-    # if not objs: print "checkAndExport aborted"; return
+    objs = rs.GetObjects("select objects to export", 0, True, True)
+    if not objs: print "checkAndExport aborted"; return
 
-    # rs.EnableRedraw(False)
 
-    layers = rs.LayerNames()
 
-    for layer in layers: 
-        scan_layer(layer)
-
+        
+    convertLayers( objs)
+    
     print 'done'
     print "\n"
         
@@ -246,6 +366,7 @@ def main():
     # rs.DeleteObjects(copies)
     # rs.EnableRedraw(True)
 
+    
 
 if __name__ == "__main__":
     main();
