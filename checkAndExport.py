@@ -1,10 +1,8 @@
-# V0.4
+# V0.5
 # to install as command (alias) or keyboard shortcut, use line below and change to your script file path
 
-# '_-runPythonScript "/Users/timcastelijn/Documents/programming/rhinoscript/checkAndExport.py"
-# '_-runPythonScript "E:/checkAndExport.py"
-# '_-runPythonScript "C:/checkAndExport.py"
-
+# '_-runPythonScript "E:/rhinoscript/checkAndExport.py"
+# '_-runPythonScript "E:/rhinoscript/checkAndExport.py" _proceed _Enter
 
 import rhinoscriptsyntax as rs
 import Rhino
@@ -14,15 +12,15 @@ import re
 
 
 # function to reverse a curve if the normal points downwards in Z-dir
-# assumed is that only closed curves can have inside or outside 
+# assumed is that only closed curves can have inside or outside
 def setCurveDir(objs):
     rs.UnselectAllObjects()
     count = 0
-    
+
     for obj in objs:
         if rs.IsCurve(obj) and rs.IsCurveClosed(obj):
-                
-                normal = rs.CurveNormal(obj)                
+
+                normal = rs.CurveNormal(obj)
                 if normal and normal[2] < 0:
                     count += 1
                     rs.ReverseCurve(obj)
@@ -30,7 +28,7 @@ def setCurveDir(objs):
 
     rs.EnableRedraw(True)
     rs.EnableRedraw(False)
-    
+
     rs.MessageBox( "resvered curves  " + str(count) + " curves")
 
     # rs.SelectObjects(objs)
@@ -43,7 +41,7 @@ def isCurveOnCPlane(obj):
         for pt in data:
             if(math.fabs( pt.Z )< 1e-8 ):
                 return True
-    
+
 	return False
 
 
@@ -64,27 +62,29 @@ def checkCurvePosition(objs):
     layers = []
     selection = []
     delete_objs = []
-    
+
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
             if not isCurveOnCPlane(obj):
                 # print "Curve {} not on Cplane".format(obj)
                 selection.append(obj)
                 appendLayer(layers, obj)
-        else:
+        
+        if rs.IsPoint(obj):
             # must be point rs.IsPoint(obj):
             if not isPointOnCplane(obj):
     			# print "Curve {} not on Cplane".format(obj)
                 # rs.SelectObject(obj)
                 selection.append(obj)
                 appendLayer(layers, obj)
-             
+            
+
     if len(selection) > 0:
         rs.SelectObjects(selection)
-        
+
     rs.EnableRedraw(True)
     rs.EnableRedraw(False)
-    
+
     # when an object is found on > 0 layers, prompt for proceed
     if len(layers) > 0:
         msg = "there were non-planar or elevated curves found on layers:\n"
@@ -103,27 +103,27 @@ def checkCurvePosition(objs):
 def diff(first, second):
         second = set(second)
         return [item for item in first if item not in second]
-    
+
 def checkCurveIntegrity(objs):
 
     layers = []
     selection = []
     delete_objs = []
-    
+
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
-        
+
             # points = rs.CurveDiscontinuity(obj, 5)
-            # if points: 
+            # if points:
                 # rs.AddPoints(points)
-                
+
                 # points2 = rs.CullDuplicatePoints(points)
                 # points3 = diff(points, points2)
-                # if points3: 
+                # if points3:
                     # rs.AddPoints(points3)
                     # return False
-            
-            
+
+
             # check for disconnected endpoints
             if not rs.IsCurveClosed(obj):
                 end = rs.CurveEndPoint(obj)
@@ -145,13 +145,13 @@ def checkCurveIntegrity(objs):
                 # except:
                     # break
                 # i+=1
-             
+
     if len(selection) > 0:
         rs.SelectObjects(selection)
-        
+
     rs.EnableRedraw(True)
     rs.EnableRedraw(False)
-    
+
     # when an object is found on > 0 layers, prompt for proceed
     if len(layers) > 0:
         msg = "curves seem to be closed but are not:\n"
@@ -187,28 +187,31 @@ def moveToOrigin(objs):
 
 # explode text objects into curves
 def explodeTextObjects(objs):
-    
+
     new_list = []
-    
+
     for obj in objs:
         if rs.IsText(obj):
             if ("CNC" in rs.ObjectLayer(obj)):
                 # rs.GetBoolean(text, "get", True)
                 # result = rs.TextObjectFont(obj, "MecSoft_Font-1")
-                
+
                 polylines = rs.ExplodeText(obj, True)
-                
+
                 for polyline in polylines:
                     new_list.append(polyline)
+            else:
+                # add unexploded text
+                new_list.append(obj)
         else:
             new_list.append(obj)
-            
+
     return new_list
-                
-                
+
+
 # recurcive explode of blocks
 def explodeBlock(objects):
-	
+
     def explode(objs, li):
         for obj in objs:
             if rs.IsBlockInstance(obj):
@@ -217,13 +220,13 @@ def explodeBlock(objects):
             else:
                 li.append(obj)
         return li
-        
-    #create empty list                
+
+    #create empty list
     li = []
 
     #redeclare objects list with content of exploded blocks
-    return explode(objects, li) 
-    
+    return explode(objects, li)
+
 def filterObjects(objs):
     new_list = []
     for obj in objs:
@@ -235,98 +238,108 @@ def filterObjects(objs):
             point=rs.coerce3dpoint(obj)
 
             circle = rs.AddCircle(rs.WorldXYPlane(),3)
-            
+
             rs.ObjectLayer(circle, layer)
             rs.MoveObject(circle, [point.X, point.Y, point.Z])
             new_list.append(circle)
             rs.DeleteObject(obj)
             # rs.DeleteObject(point)
+        elif rs.IsText(obj):
+            new_list.append(obj)
         else:
             # remove from obj list
             rs.DeleteObject(obj)
-         
+
     return new_list
- 
-def simplify(objs): 
+
+def simplify(objs):
     for obj in objs:
         if rs.IsCurve(obj):
             rs.SimplifyCurve(obj)
-            
+
 def createBiesseLayer(m):
 
     tool_table = importTools("tool_table.txt")
     if not tool_table:
         print 'tool table invalid, abort'
         return False
-        
+
     tool_id     = m.group(1)
     operation   = m.group(2)
     z_pos       = m.group(3)
-    
-    str = 'TCH'
-        
+
+    action = 'TCH'
+
     if operation=="Drill":
-        str += '[BG]'
+        action += '[BG]'
     elif operation=="Saw-X" or operation=="Saw-Y":
-        str += '[CUT_G]'
+        action += '[CUT_G]'
+    elif operation=="Clamex horizontaal":
+        action += '[ROUTG]'
+    elif operation=='Pocket':
+        action += '[POCK]'
+        action += '(DLT)2'
+        action += '(TYP)3'
     else:
-        str += '[ROUT]'
-    
-    # workpiece side parameter, 0 by default
-    str += '(SIDE)0'
-    
-    # side of curve parameter CRC
-    # 0=center, 1=left, 2 = right, curve direction is always CCW so inside is left
-    str += '(CRC)'
-    str += {
-      'Pocket': "1",
-      'Inner contour': "1",
-      'Outer contour': "2",
-      'Engrave': "0",
-      'Drill': "0",
-      'Saw-X': "0",
-      'Saw-Y': "0",
-    }[operation]
+        action += '[ROUTG]'
         
-    if operation == 'Pocket':
-        str += '(TYP)ptOUT'
-    
-    # depth parameter
-    depth = re.search( 'd(\d+\.?\d*)', z_pos)
-    if depth:
-        # workpiece top -depth, set parameter "TH" to workpiece height and use z_pos as depth
-        if not workpiece_thickness:
-            workpiece_thickness = rs.GetReal('Please ener the workpiece thickness (TH), to create depth operation')
+        # side of curve parameter CRC
+        # 0=center, 1=right, 2 = left, curve direction is always CCW so inside is left
+        action += '(CRC)'
+        action += {
+          'Pocket': "1",
+          'Inner contour': "1",
+          'Outer contour': "2",
+          'Engrave': "0",
+          'Drill': "0",
+          'Saw-X': "0",
+          'Saw-Y': "0",
+          'Clamex horizontaal': "0",
+        }[operation]
         
-        if workpiece_thickness:
-            str += '(DP)' + depth.group(1)
-            str += '(TH)' + workpiece_thickness
-        else:
-            print 'abort'
-            return False
-    else:
-        # workpiece bottom +depth, parameter "TH" is 0 by default and use z_pos as depth from bottom
-        str += '(DP)-' + z_pos
-    
-    # tool name paramter
-    if tool_id in tool_table and tool_table[tool_id]["TNM"]:
-        str += '(TNM)$%s$' % tool_table[tool_id]["TNM"]
-    else:
-        rs.MessageBox( 'tool_id %s not in tool table file or TNM not formatted correctly.' % (tool_id) )
-        return False
+    action += '(ID)$A%s-%s-%s$' % (m.group(1),m.group(2),m.group(3) )
+    action += '(GID)$G%s-%s-%s$' % (m.group(1),m.group(2),m.group(3))
     
     # diameter parameter
     # todo: is this required??
     if tool_id in tool_table and tool_table[tool_id]["DIA"]:
-        str += '(DIA)' + tool_table[tool_id]["DIA"]
+        action += '(DIA)' + tool_table[tool_id]["DIA"]
     else:
         rs.MessageBox( 'tool_id %s not in tool table file or DIA not formatted correctly.' %  (tool_id) )
         return False
-    
-    return  str            
-            
-            
-            
+        
+    # depth parameter
+    depth = re.search( 'd(\d+\.?\d*)', z_pos)
+    angle = re.search( 'c(\d+\.?\d*)', z_pos)
+    if depth:
+        # workpiece top -depth, set parameter "TH" to workpiece height and use z_pos as depth
+        if not workpiece_thickness:
+            workpiece_thickness = rs.GetReal('Please enter the workpiece thickness (TH), to create depth operation')
+
+        if workpiece_thickness:
+            action += '(DP)' + depth.group(1)
+            action += '(TH)' + workpiece_thickness
+        else:
+            print 'abort'
+            return False
+    elif angle:
+        action += '(DP)0'
+    else:
+        # workpiece bottom +depth, parameter "TH" is 0 by default and use z_pos as depth from bottom
+        action += '(DP)-' + z_pos
+
+    # tool name paramter
+    if tool_id in tool_table and tool_table[tool_id]["TNM"]:
+        action += '(TNM)$%s$' % tool_table[tool_id]["TNM"]
+    else:
+        rs.MessageBox( 'tool_id %s not in tool table file or TNM not formatted correctly.' % (tool_id) )
+        return False
+
+        
+    return  action
+
+
+
 def convertLayers( objs ):
 
     # first find relevant layers
@@ -336,51 +349,67 @@ def convertLayers( objs ):
         layer_name = rs.ObjectLayer(obj)
         if layer_name not in layers:
             layers.append(layer_name)
-    
+
     # get all layers
     workpiece_thickness = None
     invalid_lines = ''
+    
+    
     for layer in layers:
         # todo's
         # - add Clamex
         m = re.search(  '(\d\d.\d\d)\s'+
-                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y).+'+
-                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
+                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal).+'+
+                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*|(?<=\s)c\d+\.?\d*)'
                     , layer)
-        
+
         if m and len(m.groups()) == 3:
-            biesselayer = createBiesseLayer(m)
             
+            action_layer_name = createBiesseLayer(m)
+
             # create new layer
-            if biesselayer:
+            if action_layer_name:
+                geo_layer_name = 'TCH[GEO](ID)$G%s-%s-%s$' % (m.group(1),m.group(2),m.group(3))
+
+                rs.AddLayer( action_layer_name )
+                rs.AddLayer( geo_layer_name )
                 
-                rs.AddLayer( biesselayer )
-                rs.LayerColor(biesselayer, rs.LayerColor(layer))
-                biesse_layers.append(biesselayer)
-                
+                rs.LayerColor(geo_layer_name, rs.LayerColor(layer))
+                rs.LayerColor(action_layer_name, rs.LayerColor(layer))
+
                 # assign new layer to objects
                 for obj in objs:
                     if rs.ObjectLayer(obj) == layer:
-                        rs.ObjectLayer(obj, biesselayer)
+                        rs.ObjectLayer(obj, geo_layer_name)
+                        
+                # add one point to enable exporting
+                circle = rs.AddCircle(rs.WorldXYPlane(),3)
+                rs.ObjectLayer(circle , action_layer_name)
+                objs.append(circle)
+                
+                # add to table for deleting layers later on
+                biesse_layers.append(geo_layer_name)
+                biesse_layers.append(action_layer_name)
+                       
             else:
                 return False
         else:
             invalid_lines += '- ' + layer + '\n'
-        
+
     if len(invalid_lines)>0:
         msg =   'layers have incorrect format and will not be converted for export:\n' + invalid_lines + '\n'
         msg+=   'correct format is: "<xx.xx> - <operation> - <+|d><x.xx>"\n'
         msg+=   'where operation must be "Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y"'
-                
+
         rs.MessageBox(msg)
-        
+
     return biesse_layers
-            
+
 
 def importTools(filename):
     tool_table={}
     invalid_lines =''
-    with open(filename) as fp: 
+    with open(filename) as fp:
         # read header
         line = fp.readline()
         # read first line
@@ -396,45 +425,46 @@ def importTools(filename):
                 tool_table[m.group(1)] = {"TNM":m.group(2), "DIA":m.group(3)}
             else:
                 invalid_lines += line +'\n'
-                
+
             line = fp.readline()
             cnt += 1
 
         if len(invalid_lines)>0:
             rs.MessageBox('lines could not be read, please check the tool table file:\n' + invalid_lines + '')
             return False
-                
+
         return tool_table
-        
+
 # main script
 def main():
-    
+
     # create globally used array of copies
     copies = []
     biesse_layers=[]
 
+
+    # promt convert for biesse
+    convert_for_biesse = rs.GetBoolean("convert layer names for Biesseworks", (['proceed', 'no', 'yes']), (False) )[0]
+    
     # get objects to export
     objs = rs.GetObjects("select objects to export", 0, True, True)
     if not objs: print "checkAndExport aborted"; return
-    
-    # promt convert for biesse
-    convert_for_biesse = rs.GetBoolean("convert layer names for Biesseworks", (['proceed', 'no', 'yes']), (True) )
-    
+
     rs.EnableRedraw(False)
 
     # create copies of all block contents
     copies = rs.CopyObjects(objs)
 
-    
+
     # explodeblock
     copies = explodeBlock(copies)
-    
+
     copies = explodeTextObjects(copies)
-    
+
     copies = filterObjects(copies)
-     
+
     if checkCurveIntegrity(copies):
-    
+
         # check curves for deviation from c-plane
         proceed = checkCurvePosition(copies);
 
@@ -443,28 +473,28 @@ def main():
             # rs.UnselectAllObjects()
 
             simplify(copies)
-                
+
             setCurveDir(copies);
-            
-            if convert_for_biesse :
-                biesse_layers = convertLayers(copies)
-            
+
             # move to origin
             result = moveToOrigin(copies);
 
+            if convert_for_biesse :
+                biesse_layers = convertLayers(copies)
+
             if result:
-                        
+
                 # export
                 rs.SelectObjects(copies)
                 result = rs.Command("Export")
                 if result: print 'exported succesfully'
-            
+
     rs.DeleteObjects(copies)
-    
+
     if len(biesse_layers)>0:
         for layer in biesse_layers:
             rs.PurgeLayer(layer)
-        
+
     rs.EnableRedraw(True)
 
 
