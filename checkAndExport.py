@@ -312,21 +312,14 @@ def createBiesseLayer(m):
     depth = re.search( 'd(\d+\.?\d*)', z_pos)
     angle = re.search( 'c(\d+\.?\d*)', z_pos)
     if depth:
-        # workpiece top -depth, set parameter "TH" to workpiece height and use z_pos as depth
-        if not workpiece_thickness:
-            workpiece_thickness = rs.GetReal('Please enter the workpiece thickness (TH), to create depth operation')
-
-        if workpiece_thickness:
-            action += '(DP)' + depth.group(1)
-            action += '(TH)' + workpiece_thickness
-        else:
-            print 'abort'
-            return False
+        action += '(DP)' + depth.group(1)
     elif angle:
         action += '(DP)0'
     else:
-        # workpiece bottom +depth, parameter "TH" is 0 by default and use z_pos as depth from bottom
-        action += '(DP)-' + z_pos
+        if float(z_pos)<0.0001:
+            action += '(DP)0.1'
+        else:
+            action += '(DP)LPZ-' + z_pos
 
     # tool name paramter
     if tool_id in tool_table and tool_table[tool_id]["TNM"]:
@@ -351,15 +344,13 @@ def convertLayers( objs ):
             layers.append(layer_name)
 
     # get all layers
-    workpiece_thickness = None
     invalid_lines = ''
-    
-    
     for layer in layers:
         # todo's
         # - add Clamex
         m = re.search(  '(\d\d.\d\d)\s'+
-                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal).+'+
+                        # '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal).+'+
+                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal).+'+
                         '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*|(?<=\s)c\d+\.?\d*)'
                     , layer)
 
