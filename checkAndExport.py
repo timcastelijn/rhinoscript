@@ -1,3 +1,16 @@
+"""
+@name:          checkandexport
+@description:   exports curves for TheNewMakers milling template
+@author:        tim castelijn
+@version:       0.6
+@link:          https://github.com/timcastelijn/rhinoscript
+@notes:         Works with Rhino 5.
+
+"""
+
+# V0.6.1
+# - added projectToCplane
+
 # V0.6
 # - added text to line convert
 
@@ -37,10 +50,6 @@ def setCurveDir(objs):
 
     rs.MessageBox( "reversed curves  " + str(count) + " curves")
 
-    # rs.SelectObjects(objs)
-    # rs.Command("Dir")
-
-
 def isCurveOnCPlane(obj):
     if rs.IsCurvePlanar(obj):
         data = rs.CurvePoints(obj)
@@ -67,6 +76,13 @@ def appendLayer(layers, obj):
     except Exception as e:
         layers.append( rs.ObjectLayer(obj) )
 
+def projectLayersToClpane(layers):
+    for layer in layers:
+        curves = rs.ObjectsByLayer(layer)
+
+        xform = rs.XformPlanarProjection(rs.WorldXYPlane())
+        rs.TransformObjects( curves, xform, False )
+        
 def checkCurvePosition(objs):
 
     layers = []
@@ -99,25 +115,39 @@ def checkCurvePosition(objs):
                     
     # when an object is found on > 0 layers, prompt for proceed
     if len(layers) > 0:
+    
+
         rs.SelectObjects(selection)
         redraw()
-        
+
+#        THIS SECTION ALLOWS CPLANE PROJECTION
+#        
+#        list = []
+#        for layer in layers:
+#            list.append((layer, False))
+#        
+#        result = rs.CheckListBox(list, "there were non-planar or elevated curves found on layers below do you want to project them to XYplane", "ProjectToCplane")
+#        project =[]
+#        if result:
+#            for item in result:
+#                if item[1]: 
+#                    project.append(item[0])
+#            projectLayersToClpane(project)
+#        else:
+#            return False
+            
         msg = "there were non-planar or elevated curves found on layers:\n"
         for layer in layers:
             msg = msg + "- " + layer + " \n"
 
         msg = msg + '\n Do you want to proceed?'
 
+        
         if rs.MessageBox(msg, 1) != 1:
             # do not proceed with export
             return False
 
-    # else
     return True
-
-def diff(first, second):
-        second = set(second)
-        return [item for item in first if item not in second]
 
 def checkCurveIntegrity(objs):
 
@@ -127,18 +157,7 @@ def checkCurveIntegrity(objs):
 
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
-
-            # points = rs.CurveDiscontinuity(obj, 5)
-            # if points:
-                # rs.AddPoints(points)
-
-                # points2 = rs.CullDuplicatePoints(points)
-                # points3 = diff(points, points2)
-                # if points3:
-                    # rs.AddPoints(points3)
-                    # return False
-
-
+        
             # check for disconnected endpoints
             if not rs.IsCurveClosed(obj):
                 end = rs.CurveEndPoint(obj)
@@ -147,19 +166,6 @@ def checkCurveIntegrity(objs):
                     #print "Curve {} not on Cplane".format(obj)
                     selection.append(obj)
                     appendLayer(layers, obj)
-            # check for too small curvelengths
-            # i=0
-            # while True:
-                # try:
-                    # leng = rs.CurveLength(obj,i)
-                    # if len < 0.02:
-                        # print len
-                        # selection.append(obj)
-                        # appendLayer(layers, obj)
-                        # break
-                # except:
-                    # break
-                # i+=1
 
     if len(selection) > 0:
         rs.SelectObjects(selection)
@@ -458,7 +464,6 @@ def convertLayers( objs ):
 
     return biesse_layers
 
-
 def importTools(filename):
     tool_table={}
     invalid_lines =''
@@ -490,7 +495,8 @@ def importTools(filename):
 
 # main script
 def main():
-
+    
+    
     # create globally used array of copies
     copies = []
     biesse_layers=[]
