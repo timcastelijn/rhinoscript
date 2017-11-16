@@ -1,4 +1,6 @@
-# V0.5
+# V0.6
+# - added text to line convert
+
 # to install as command (alias) or keyboard shortcut, use line below and change to your script file path
 
 # '_-runPythonScript "E:/rhinoscript/checkAndExport.py"
@@ -10,6 +12,10 @@ import scriptcontext as sc
 import math
 import re
 
+
+def redraw():
+    rs.EnableRedraw(True)
+    rs.EnableRedraw(False)
 
 # function to reverse a curve if the normal points downwards in Z-dir
 # assumed is that only closed curves can have inside or outside
@@ -29,7 +35,7 @@ def setCurveDir(objs):
     rs.EnableRedraw(True)
     rs.EnableRedraw(False)
 
-    rs.MessageBox( "resvered curves  " + str(count) + " curves")
+    rs.MessageBox( "reversed curves  " + str(count) + " curves")
 
     # rs.SelectObjects(objs)
     # rs.Command("Dir")
@@ -43,11 +49,16 @@ def isCurveOnCPlane(obj):
                 return True
 
 	return False
+    
+def isCurveBelowCPlane(obj):
+    data = rs.CurvePoints(obj)
+    for pt in data:
+        if (pt.Z < -1e-8 ):
+            return True
 
+	return False
 
-def isPointOnCplane(obj):
-    return (math.fabs( rs.PointCoordinates(obj)[2] ) < 1e-8)
-
+# append objectlayer to list
 def appendLayer(layers, obj):
     layer = rs.ObjectLayer(obj)
     try:
@@ -56,37 +67,41 @@ def appendLayer(layers, obj):
     except Exception as e:
         layers.append( rs.ObjectLayer(obj) )
 
-
 def checkCurvePosition(objs):
 
     layers = []
     selection = []
-    delete_objs = []
-
+    
+    layers_low = []
+    selection_low = []
+       
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
             if not isCurveOnCPlane(obj):
                 # print "Curve {} not on Cplane".format(obj)
                 selection.append(obj)
                 appendLayer(layers, obj)
+                if isCurveBelowCPlane(obj):
+                    selection_low.append(obj)
+                    appendLayer(layers_low, obj)
+    
+    # if any objects below cplane were found, abort
+    if len(layers_low) >0:
+        rs.SelectObjects(selection_low)
+        redraw()
         
-        if rs.IsPoint(obj):
-            # must be point rs.IsPoint(obj):
-            if not isPointOnCplane(obj):
-    			# print "Curve {} not on Cplane".format(obj)
-                # rs.SelectObject(obj)
-                selection.append(obj)
-                appendLayer(layers, obj)
-            
+        msg = "there were curves found below C-plane. please return to drawing school:\n"
+        for layer in layers_low:
+            msg = msg + "- " + layer + " \n"
 
-    if len(selection) > 0:
-        rs.SelectObjects(selection)
-
-    rs.EnableRedraw(True)
-    rs.EnableRedraw(False)
-
+        rs.MessageBox(msg)
+        return False
+                    
     # when an object is found on > 0 layers, prompt for proceed
     if len(layers) > 0:
+        rs.SelectObjects(selection)
+        redraw()
+        
         msg = "there were non-planar or elevated curves found on layers:\n"
         for layer in layers:
             msg = msg + "- " + layer + " \n"
@@ -167,7 +182,6 @@ def checkCurveIntegrity(objs):
     # else
     return True
 
-
 def moveToOrigin(objs):
     #get left bottom
 
@@ -185,6 +199,55 @@ def moveToOrigin(objs):
     else:
         return False
 
+def convertTextToPolylines(obj):
+    
+    # get object properties
+    text            = rs.TextObjectText(obj)
+    pt              = rs.TextObjectPoint(obj)
+    origin          = rs.coerce3dpoint([0,0,0])
+    ht              = rs.TextObjectHeight(obj)
+    object_layer    = rs.ObjectLayer(obj)
+    plane           = rs.TextObjectPlane(obj)
+        
+    diff = rs.coerce3dpoint([pt.X, pt.Y, pt.Z])
+
+    p1 = rs.WorldXYPlane()
+        
+    matrix = rs.XformRotation4(p1.XAxis, p1.YAxis, p1.ZAxis, plane.XAxis, plane.YAxis, plane.ZAxis)
+
+
+    rs.DeleteObject(obj)
+
+    # set current layer to put strings in
+    prevlayer = rs.CurrentLayer()
+    layer = rs.AddLayer('temptextlayer')
+    rs.CurrentLayer('temptextlayer')
+
+    # split text at enters
+    text = text.split('\r\n')
+    opts='GroupOutput=No FontName="Machine Tool Gothic" Italic=No Bold=No Height='+ str(ht)
+    opts+=" Output=Curves AllowOpenCurves=Yes LowerCaseAsSmallCaps=No AddSpacing=No "
+    
+    origin.Y += ht * len(text) *1.2
+    for item in text:
+        rs.Command("_-TextObject " + opts + '"'+item+'"' + " " + str(origin) , False)
+        origin.Y -= ht *1.5
+        
+    #restore current layer
+    rs.CurrentLayer(prevlayer)
+
+    
+    #select newly created texts
+    polylines = rs.ObjectsByLayer('temptextlayer')
+    
+    # transform to old position
+    rs.TransformObjects(polylines, matrix, copy=False)
+    rs.MoveObjects(polylines, diff)
+    
+    rs.ObjectLayer(polylines, object_layer)
+    
+    return polylines  
+        
 # explode text objects into curves
 def explodeTextObjects(objs):
 
@@ -195,9 +258,12 @@ def explodeTextObjects(objs):
             if ("CNC" in rs.ObjectLayer(obj)):
                 # rs.GetBoolean(text, "get", True)
                 # result = rs.TextObjectFont(obj, "MecSoft_Font-1")
+                
+                
+                # polylines = rs.ExplodeText(obj, True)
 
-                polylines = rs.ExplodeText(obj, True)
-
+                polylines = convertTextToPolylines(obj)
+                
                 for polyline in polylines:
                     new_list.append(polyline)
             else:
@@ -207,7 +273,6 @@ def explodeTextObjects(objs):
             new_list.append(obj)
 
     return new_list
-
 
 # recurcive explode of blocks
 def explodeBlock(objects):
@@ -227,6 +292,7 @@ def explodeBlock(objects):
     #redeclare objects list with content of exploded blocks
     return explode(objects, li)
 
+# filters only curves and textobjects, converts points to circles 
 def filterObjects(objs):
     new_list = []
     for obj in objs:
@@ -234,6 +300,7 @@ def filterObjects(objs):
             new_list.append(obj)
 
         elif rs.IsPoint(obj):
+            # convert to circle
             layer = rs.ObjectLayer(obj)
             point=rs.coerce3dpoint(obj)
 
@@ -310,13 +377,10 @@ def createBiesseLayer(m):
         
     # depth parameter
     depth = re.search( 'd(\d+\.?\d*)', z_pos)
-    angle = re.search( 'c(\d+\.?\d*)', z_pos)
     if depth:
         action += '(DP)' + depth.group(1)
-    elif angle:
-        action += '(DP)0'
     else:
-        if float(z_pos)<0.0001:
+        if not operation == 'Clamex horizontaal' and float(z_pos)<0.0001:
             action += '(DP)0.1'
         else:
             action += '(DP)LPZ-' + z_pos
@@ -330,8 +394,6 @@ def createBiesseLayer(m):
 
         
     return  action
-
-
 
 def convertLayers( objs ):
 
@@ -351,7 +413,7 @@ def convertLayers( objs ):
         m = re.search(  '(\d\d.\d\d)\s'+
                         # '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal).+'+
                         '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal).+'+
-                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*|(?<=\s)c\d+\.?\d*)'
+                        '((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'
                     , layer)
 
         if m and len(m.groups()) == 3:
@@ -451,7 +513,8 @@ def main():
     copies = explodeBlock(copies)
 
     copies = explodeTextObjects(copies)
-
+    
+    # filter objects to only curves and textobjects
     copies = filterObjects(copies)
 
     if checkCurveIntegrity(copies):
