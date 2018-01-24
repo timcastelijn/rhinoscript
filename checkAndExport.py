@@ -19,11 +19,16 @@
 # '_-runPythonScript "E:/rhinoscript/checkAndExport.py"
 # '_-runPythonScript "E:/rhinoscript/checkAndExport.py" _proceed _Enter
 
+
 import rhinoscriptsyntax as rs
 import Rhino
 import scriptcontext as sc
 import math
 import re
+import time
+
+# SCRIPT GLOBALS
+EXPORT_FONT = 'timfont'
 
 
 def redraw():
@@ -38,17 +43,30 @@ def setCurveDir(objs):
 
     for obj in objs:
         if rs.IsCurve(obj) and rs.IsCurveClosed(obj):
+        
+            # 1 = CW, -1 = CCW, 0 = N/A
+            # -1 if the curve's orientation is counter-clockwise
+            # 0 if unable to compute the curve's orientation
+            if rs.ClosedCurveOrientation(obj) == 0:
+                rs.SelectObject(obj)
+                rs.MessageBox( "Curve direction could not be determined")
+                return False
+            if rs.ClosedCurveOrientation(obj) == 1:
+                rs.ReverseCurve(obj)
+                count += 1
+                rs.SelectObject(obj)                    
 
-                normal = rs.CurveNormal(obj)
-                if normal and normal[2] < 0:
-                    count += 1
-                    rs.ReverseCurve(obj)
-                    rs.SelectObject(obj)
+                # normal = rs.CurveNormal(obj)
+                # if normal and normal[2] < 0:
+                    # count += 1
+                    # rs.ReverseCurve(obj)
+                    # rs.SelectObject(obj)
 
     rs.EnableRedraw(True)
     rs.EnableRedraw(False)
 
     rs.MessageBox( "reversed curves  " + str(count) + " curves")
+    return True
 
 def isCurveOnCPlane(obj):
     if rs.IsCurvePlanar(obj):
@@ -58,7 +76,7 @@ def isCurveOnCPlane(obj):
                 return True
 
 	return False
-    
+
 def isCurveBelowCPlane(obj):
     data = rs.CurvePoints(obj)
     for pt in data:
@@ -82,15 +100,15 @@ def projectLayersToClpane(layers):
 
         xform = rs.XformPlanarProjection(rs.WorldXYPlane())
         rs.TransformObjects( curves, xform, False )
-        
+
 def checkCurvePosition(objs):
 
     layers = []
     selection = []
-    
+
     layers_low = []
     selection_low = []
-       
+
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
             if not isCurveOnCPlane(obj):
@@ -100,52 +118,53 @@ def checkCurvePosition(objs):
                 if isCurveBelowCPlane(obj):
                     selection_low.append(obj)
                     appendLayer(layers_low, obj)
-    
+
     # if any objects below cplane were found, abort
     if len(layers_low) >0:
         rs.SelectObjects(selection_low)
         redraw()
-        
-        msg = "there were curves found below C-plane. please return to drawing school:\n"
+
+        msg = "there were curves found below C-plane. Milling the router bed might damage the equipment.\n\nPlease check layers:\n"
         for layer in layers_low:
             msg = msg + "- " + layer + " \n"
 
-        rs.MessageBox(msg)
-        return False
-                    
+        if rs.MessageBox(msg, 18, 'Warning') != 5:
+           # not 5, button is not ignore
+           # do not proceed with export
+           return False
+
+
     # when an object is found on > 0 layers, prompt for proceed
     if len(layers) > 0:
-    
+
 
         rs.SelectObjects(selection)
         redraw()
 
-#        THIS SECTION ALLOWS CPLANE PROJECTION
-#        
-#        list = []
-#        for layer in layers:
-#            list.append((layer, False))
-#        
-#        result = rs.CheckListBox(list, "there were non-planar or elevated curves found on layers below do you want to project them to XYplane", "ProjectToCplane")
-#        project =[]
-#        if result:
-#            for item in result:
-#                if item[1]: 
-#                    project.append(item[0])
-#            projectLayersToClpane(project)
-#        else:
-#            return False
-            
-        msg = "there were non-planar or elevated curves found on layers:\n"
+        list = []
         for layer in layers:
-            msg = msg + "- " + layer + " \n"
+            list.append((layer, False))
 
-        msg = msg + '\n Do you want to proceed?'
-
-        
-        if rs.MessageBox(msg, 1) != 1:
-            # do not proceed with export
+        result = rs.CheckListBox(list, "there were non-planar or elevated curves found on layers below do you want to project them to XYplane", "ProjectToCplane")
+        project =[]
+        if result:
+            for item in result:
+                if item[1]:
+                    project.append(item[0])
+            projectLayersToClpane(project)
+        else:
             return False
+
+#        msg = "there were non-planar or elevated curves found on layers:\n"
+#        for layer in layers:
+#            msg = msg + "- " + layer + " \n"
+#
+#        msg = msg + '\n Do you want to proceed?'
+#
+#
+#        if rs.MessageBox(msg, 1) != 1:
+#            # do not proceed with export
+#            return False
 
     return True
 
@@ -157,12 +176,12 @@ def checkCurveIntegrity(objs):
 
     for i, obj in enumerate(objs):
         if rs.IsCurve(obj):
-        
+
             # check for disconnected endpoints
             if not rs.IsCurveClosed(obj):
                 end = rs.CurveEndPoint(obj)
                 start = rs.CurveStartPoint(obj)
-                if rs.Distance(start, end)<0.1:
+                if rs.Distance(start, end)<0.05:
                     #print "Curve {} not on Cplane".format(obj)
                     selection.append(obj)
                     appendLayer(layers, obj)
@@ -206,7 +225,7 @@ def moveToOrigin(objs):
         return False
 
 def convertTextToPolylines(obj):
-    
+
     # get object properties
     text            = rs.TextObjectText(obj)
     pt              = rs.TextObjectPoint(obj)
@@ -214,67 +233,66 @@ def convertTextToPolylines(obj):
     ht              = rs.TextObjectHeight(obj)
     object_layer    = rs.ObjectLayer(obj)
     plane           = rs.TextObjectPlane(obj)
-        
+
     diff = rs.coerce3dpoint([pt.X, pt.Y, pt.Z])
 
     p1 = rs.WorldXYPlane()
-        
-    matrix = rs.XformRotation4(p1.XAxis, p1.YAxis, p1.ZAxis, plane.XAxis, plane.YAxis, plane.ZAxis)
+    #restore view cplane
+    rs.ViewCPlane(None, p1)
 
+    matrix = rs.XformRotation4(p1.XAxis, p1.YAxis, p1.ZAxis, plane.XAxis, plane.YAxis, plane.ZAxis)
 
     rs.DeleteObject(obj)
 
-    # set current layer to put strings in
-    prevlayer = rs.CurrentLayer()
-    layer = rs.AddLayer('temptextlayer')
-    rs.CurrentLayer('temptextlayer')
-
     # split text at enters
     text = text.split('\r\n')
-    opts='GroupOutput=No FontName="Machine Tool Gothic" Italic=No Bold=No Height='+ str(ht)
+    opts='GroupOutput=No FontName="' + EXPORT_FONT + '" Italic=No Bold=No Height='+ str(ht)
     opts+=" Output=Curves AllowOpenCurves=Yes LowerCaseAsSmallCaps=No AddSpacing=No "
-    
-    origin.Y += ht * len(text) *1.2
+
+    origin.Y += ht * len(text) - ht*0.35 - 3
+
+    polylines=[]
     for item in text:
         rs.Command("_-TextObject " + opts + '"'+item+'"' + " " + str(origin) , False)
-        origin.Y -= ht *1.5
-        
-    #restore current layer
-    rs.CurrentLayer(prevlayer)
+        polylines += rs.LastCreatedObjects()
+        origin.Y -= ht *1.6
 
-    
-    #select newly created texts
-    polylines = rs.ObjectsByLayer('temptextlayer')
-    
+    rs.ObjectLayer(polylines, object_layer)
+
     # transform to old position
     rs.TransformObjects(polylines, matrix, copy=False)
     rs.MoveObjects(polylines, diff)
-    
-    rs.ObjectLayer(polylines, object_layer)
-    
-    return polylines  
-        
+
+
+    return polylines
+
 # explode text objects into curves
 def explodeTextObjects(objs):
-
     new_list = []
 
     for obj in objs:
-        if rs.IsText(obj):
-            if ("CNC" in rs.ObjectLayer(obj)):
-                # rs.GetBoolean(text, "get", True)
-                # result = rs.TextObjectFont(obj, "MecSoft_Font-1")
-                
-                
-                # polylines = rs.ExplodeText(obj, True)
 
-                polylines = convertTextToPolylines(obj)
-                
-                for polyline in polylines:
-                    new_list.append(polyline)
-            else:
-                # add unexploded text
-                new_list.append(obj)
+        if rs.IsText(obj) and rs.LayerVisible( rs.ObjectLayer(obj) ):
+            # only export visible layers:
+            polylines = convertTextToPolylines(obj)
+
+            for polyline in polylines:
+                new_list.append(polyline)
+
+#            if ("CNC" in rs.ObjectLayer(obj)):
+#                # rs.GetBoolean(text, "get", True)
+#                # result = rs.TextObjectFont(obj, "Machine Tool Gothic")
+#
+#                # rs.MessageBox('test' + rs.TextObjectText(obj))
+#                # polylines = rs.ExplodeText(obj, True)
+#
+#                polylines = convertTextToPolylines(obj)
+#
+#                for polyline in polylines:
+#                    new_list.append(polyline)
+#            else:
+#                # add unexploded text
+#                new_list.append(obj)
         else:
             new_list.append(obj)
 
@@ -286,10 +304,19 @@ def explodeBlock(objects):
     def explode(objs, li):
         for obj in objs:
             if rs.IsBlockInstance(obj):
-                temp_objs = rs.ExplodeBlockInstance(obj)
+
+                # DIRTY FIX FOR RHINO 5-SR14 522.8390 (5-22-2017)
+                # temp_objs = rs.ExplodeBlockInstance(obj)
+
+                rs.UnselectAllObjects()
+                rs.SelectObject(obj)
+                rs.Command("Explode" , False)
+                temp_objs = rs.LastCreatedObjects()
+
                 explode(temp_objs, li)
             else:
                 li.append(obj)
+
         return li
 
     #create empty list
@@ -298,27 +325,32 @@ def explodeBlock(objects):
     #redeclare objects list with content of exploded blocks
     return explode(objects, li)
 
-# filters only curves and textobjects, converts points to circles 
+# filters only curves and textobjects, converts points to circles
 def filterObjects(objs):
     new_list = []
     for obj in objs:
-        if rs.IsCurve(obj):
-            new_list.append(obj)
+        if rs.LayerVisible( rs.ObjectLayer(obj) ):
+            # only export visible layers
+            if rs.IsCurve(obj):
+                new_list.append(obj)
 
-        elif rs.IsPoint(obj):
-            # convert to circle
-            layer = rs.ObjectLayer(obj)
-            point=rs.coerce3dpoint(obj)
+            elif rs.IsPoint(obj):
+                # convert to circle
+                layer = rs.ObjectLayer(obj)
+                point=rs.coerce3dpoint(obj)
 
-            circle = rs.AddCircle(rs.WorldXYPlane(),3)
+                circle = rs.AddCircle(rs.WorldXYPlane(),3)
 
-            rs.ObjectLayer(circle, layer)
-            rs.MoveObject(circle, [point.X, point.Y, point.Z])
-            new_list.append(circle)
-            rs.DeleteObject(obj)
-            # rs.DeleteObject(point)
-        elif rs.IsText(obj):
-            new_list.append(obj)
+                rs.ObjectLayer(circle, layer)
+                rs.MoveObject(circle, [point.X, point.Y, point.Z])
+                new_list.append(circle)
+                rs.DeleteObject(obj)
+                # rs.DeleteObject(point)
+            elif rs.IsText(obj):
+                new_list.append(obj)
+            else:
+                # remove from obj list
+                rs.DeleteObject(obj)
         else:
             # remove from obj list
             rs.DeleteObject(obj)
@@ -355,7 +387,7 @@ def createBiesseLayer(m):
         action += '(TYP)3'
     else:
         action += '[ROUTG]'
-        
+
         # side of curve parameter CRC
         # 0=center, 1=right, 2 = left, curve direction is always CCW so inside is left
         action += '(CRC)'
@@ -369,10 +401,10 @@ def createBiesseLayer(m):
           'Saw-Y': "0",
           'Clamex horizontaal': "0",
         }[operation]
-        
+
     action += '(ID)$A%s-%s-%s$' % (m.group(1),m.group(2),m.group(3) )
     action += '(GID)$G%s-%s-%s$' % (m.group(1),m.group(2),m.group(3))
-    
+
     # diameter parameter
     # todo: is this required??
     if tool_id in tool_table and tool_table[tool_id]["DIA"]:
@@ -380,7 +412,7 @@ def createBiesseLayer(m):
     else:
         rs.MessageBox( 'tool_id %s not in tool table file or DIA not formatted correctly.' %  (tool_id) )
         return False
-        
+
     # depth parameter
     depth = re.search( 'd(\d+\.?\d*)', z_pos)
     if depth:
@@ -398,7 +430,7 @@ def createBiesseLayer(m):
         rs.MessageBox( 'tool_id %s not in tool table file or TNM not formatted correctly.' % (tool_id) )
         return False
 
-        
+
     return  action
 
 def convertLayers( objs ):
@@ -423,7 +455,7 @@ def convertLayers( objs ):
                     , layer)
 
         if m and len(m.groups()) == 3:
-            
+
             action_layer_name = createBiesseLayer(m)
 
             # create new layer
@@ -432,7 +464,7 @@ def convertLayers( objs ):
 
                 rs.AddLayer( action_layer_name )
                 rs.AddLayer( geo_layer_name )
-                
+
                 rs.LayerColor(geo_layer_name, rs.LayerColor(layer))
                 rs.LayerColor(action_layer_name, rs.LayerColor(layer))
 
@@ -440,16 +472,16 @@ def convertLayers( objs ):
                 for obj in objs:
                     if rs.ObjectLayer(obj) == layer:
                         rs.ObjectLayer(obj, geo_layer_name)
-                        
+
                 # add one point to enable exporting
                 circle = rs.AddCircle(rs.WorldXYPlane(),3)
                 rs.ObjectLayer(circle , action_layer_name)
                 objs.append(circle)
-                
+
                 # add to table for deleting layers later on
                 biesse_layers.append(geo_layer_name)
                 biesse_layers.append(action_layer_name)
-                       
+
             else:
                 return False
         else:
@@ -495,8 +527,7 @@ def importTools(filename):
 
 # main script
 def main():
-    
-    
+
     # create globally used array of copies
     copies = []
     biesse_layers=[]
@@ -504,7 +535,7 @@ def main():
 
     # promt convert for biesse
     convert_for_biesse = rs.GetBoolean("convert layer names for Biesseworks", (['proceed', 'no', 'yes']), (False) )[0]
-    
+
     # get objects to export
     objs = rs.GetObjects("select objects to export", 0, True, True)
     if not objs: print "checkAndExport aborted"; return
@@ -514,12 +545,12 @@ def main():
     # create copies of all block contents
     copies = rs.CopyObjects(objs)
 
-
     # explodeblock
     copies = explodeBlock(copies)
 
     copies = explodeTextObjects(copies)
-    
+
+
     # filter objects to only curves and textobjects
     copies = filterObjects(copies)
 
@@ -534,7 +565,8 @@ def main():
 
             simplify(copies)
 
-            setCurveDir(copies);
+            # check curve dir
+            if not setCurveDir(copies): print "checkAndExport aborted"; return
 
             # move to origin
             result = moveToOrigin(copies);
@@ -546,7 +578,11 @@ def main():
 
                 # export
                 rs.SelectObjects(copies)
+
+                redraw()
+
                 result = rs.Command("Export")
+
                 if result: print 'exported succesfully'
 
     rs.DeleteObjects(copies)
