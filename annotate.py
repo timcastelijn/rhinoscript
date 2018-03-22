@@ -1,5 +1,7 @@
+
+
 # with a textbox that can be used to define the text in a new text dot
-from System.Windows.Forms import Form, DialogResult, Label, Button, TextBox
+from System.Windows.Forms import Form, DialogResult, Label, Button, TextBox, CheckBox
 from System.Drawing import Point, Size
 import rhinoscript.selection
 import rhinoscript.geometry
@@ -9,11 +11,18 @@ class AnnotateForm(Form):
   # build all of the controls in the constructor
   def __init__(self, curveId):
     offset = 10
+    index = 0
+    
+    # header
     self.Text = "Annotate Curve"
+    
+    #label
     crvlabel = Label(Text="Curve ID = "+str(curveId), AutoSize=True)
     self.Controls.Add(crvlabel)
     width = crvlabel.Right
     pt = Point(crvlabel.Left,crvlabel.Bottom + offset)
+    
+    #textInput
     labelstart = Label(Text="Text at start", AutoSize=True)
     labelstart.Location = pt
     self.Controls.Add(labelstart)
@@ -25,6 +34,13 @@ class AnnotateForm(Form):
       width = inputstart.Right
     self.m_inputstart = inputstart
 
+    index += 1
+    cb = CheckBox()
+    cb.Parent = self
+    cb.Location = Point(30, labelstart.Bottom + offset* index)
+    cb.Text = "Show Title"
+    cb.Checked = True
+    
     pt.X  = labelstart.Left
     pt.Y  = labelstart.Bottom + offset*3
     buttonApply = Button(Text="Apply", DialogResult=DialogResult.OK)
@@ -39,6 +55,9 @@ class AnnotateForm(Form):
     self.ClientSize = Size(width, buttonCancel.Bottom)
     self.AcceptButton = buttonApply
     self.CancelButton = buttonCancel
+    
+    
+
 
   def TextAtStart(self):
     return self.m_inputstart.Text

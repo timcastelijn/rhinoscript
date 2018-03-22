@@ -29,7 +29,7 @@ def convertToPolylines(obj):
 
     # split text at enters
     text = text.split('\r\n')
-    opts='GroupOutput=No FontName="Machine Tool Gothic" Italic=No Bold=No Height='+ str(ht)
+    opts='GroupOutput=No FontName="timfont" Italic=No Bold=No Height='+ str(ht)
     opts+=" Output=Curves AllowOpenCurves=Yes LowerCaseAsSmallCaps=No AddSpacing=No "
     
     origin.Y += ht * len(text) *1.2
@@ -53,12 +53,8 @@ def convertToPolylines(obj):
     return polylines
     
 # '_-runPythonScript "E:/rhinoscript/textobject.py"
-fontName = chr(34)+"Machine Tool Gothic"+chr(34)
-fontName = chr(34)+"Machine Tol Gothic"+chr(34)
 
-dimstyle = rs.AddDimStyle("MyDimStyle")
-rs.DimStyleFont(dimstyle, "Machine Tol Gothic")
-print  rs.DimStyleFont(dimstyle)
     
 obj = rs.GetObject('select textobject')
 
+convertToPolylines(obj)
