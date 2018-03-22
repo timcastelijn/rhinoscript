@@ -30,7 +30,7 @@ import os
 
 # SCRIPT GLOBALS
 EXPORT_FONT = 'timfont'
-DEBUG_CLAMEX        = False
+DEBUG_CLAMEX        = True
 DEBUG_FLIPCUVRVE    = False
 
 def redraw():
@@ -231,17 +231,13 @@ def checkCurveIntegrity(objs):
     
     return True
 
-def moveToOrigin(objs):
-    #get left bottom
+def moveToOrigin(objs, origin):
 
-    rs.EnableRedraw(True)
-    selection_base = rs.GetPoint("Pick export base point")
-    rs.EnableRedraw(False)
 
 	#box = rs.BoundingBox(objs)
-    if selection_base:
+    if origin:
         #selection_base = [box[0].X, box[0].Y, box[0].Z]
-        vector = rs.VectorSubtract(  selection_base, [0,0,0])
+        vector = rs.VectorSubtract(  origin, [0,0,0])
 
         objs = rs.MoveObjects(objs, rs.VectorReverse(vector))
         return True
@@ -683,36 +679,43 @@ def calcAngle(vec1, vec2):
     return theta           
         
 def extractClamexOrientation(objs):
+
+    #get left top
+    rs.EnableRedraw(True)
+    left_top = rs.GetPoint("Pick Left top of the plate for clamex export")
+    rs.EnableRedraw(False)
+            
     vec_x = [-10,0,0]
+    vec_y = (0,-10,0)
     data = []    
     result = False
         
-    for obj in objs:
-        if 'Clamex verticaal' in rs.ObjectLayer(obj):
-            result = True
-            pts = rs.CurveEditPoints(obj)
+    for obj in objs:   
+        # print rs.ObjectLayer(obj), rs.GetUserText(obj), rs.ObjectName(obj)
+        if rs.ObjectName(obj) == "clamex_verticaal_length_dir":
+            result = True            
             
-            leng = len(pts)
-            
-            a=  pts[leng-1]
-            b = pts[leng-2]
-            
+            a = rs.CurveStartPoint(obj)
+            b = rs.CurveEndPoint(obj)
+
+            location =  rs.coerce3dpoint( ( (a.X + b.X)/2, (a.Y + b.Y)/2, (a.Z + b.Z)/2 ) )
+           
             vec1 = b - a
                         
-            angle = math.degrees(calcAngle(vec1, vec_x)) 
+            angle = math.degrees(calcAngle(vec1, vec_y)) 
             
             richting = 'N/A'
-            if angle == 0:
+            if round(angle) == 90 or round(angle) == -90:
                 richting = 'X'
-            elif angle == 90:
+            elif round(angle) == 0 or round(angle) == -180:
                 richting = 'Y'
             
-            print b, angle
-            
-            data.append('CLAMEX POSX=%.2f POSY=%.2f RICHTING="%s"\n'%( b.X, b.Y, richting))
+            # data.append('CLAMEX POSX=%.3f POSY=%.3f RICHTING="%s"\n'%( location.X, location.Y, richting))
+            data.append([ location.X - left_top.X, -(location.Y - left_top.Y), richting ])
             
             if DEBUG_CLAMEX:
-                rs.AddPoint( b )
+                rs.AddPoint( location )
+                print 'POSX=%.3f POSY=%.3f RICHTING="%s" angle=%s\n'%( location.X - left_top.X, -(location.Y - left_top.Y), richting, angle)
     if result:         
         return data
 
@@ -809,9 +812,17 @@ def main():
     # check curves for deviation from c-plane
     if checkCurvePosition(copies):
         
+        clamexdata = None
+        if export_clamex_txt:
+            clamexdata = extractClamexOrientation(copies)
+
+        # obj properties are lost here
         copies = joinCurves(copies)
+            
         simplify(copies)
 
+
+        
         if checkCurveIntegrity(copies):
 
             # rs.UnselectAllObjects()
@@ -821,13 +832,18 @@ def main():
             # check curve dir
             if not setCurveDir(copies): print "checkAndExport aborted"; return
 
+            
+            #get left bottom
+            rs.EnableRedraw(True)
+            selection_origin = rs.GetPoint("Pick export base point")
+            rs.EnableRedraw(False)
+            
             # move to origin
-            result = moveToOrigin(copies);
+            result = moveToOrigin(copies, selection_origin);
 
             if convert_for_biesse :
                 biesse_layers = convertLayers(copies)
 
-            # clamexdata = extractClamexOrientation(copies)
     
             if result:
 
@@ -843,11 +859,17 @@ def main():
                     
                     filename_stripped, file_extension = os.path.splitext(filename)
                     
-                    if export_clamex_txt and clamexdata:
-                        
-                        for line in clamexdata:
-                            with open(filename_stripped + '.txt', 'a') as the_file:
-                                the_file.write(line)
+                    if clamexdata:                        
+                        with open(filename_stripped + '.txt', 'w') as the_file:
+                            the_file.write('')
+
+                        with open(filename_stripped + '.txt', 'a') as the_file:
+                            for line in clamexdata:
+                                str = 'CLAMEX POSX=%.3f POSY=%.3f RICHTING="%s"\n'%( line[0], line[1], line[2])
+                                print str
+                                the_file.write(str)
+                    
+
                     
                     if result: print 'exported succesfully'
 
