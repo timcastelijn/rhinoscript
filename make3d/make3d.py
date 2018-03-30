@@ -167,6 +167,7 @@ def sweepVolume(crv, tool_id, z_pos):
     # return volume
     
     rs.DeleteObject(profile)
+    
 
     return surface_id
 
@@ -195,22 +196,27 @@ def makeEngraves(tool_id, operation, z_pos, obj):
     rs.ViewCPlane(None, p1)
             
     subtracts = []        
-    if operation == 'Engrave':
         
-        # return [sweepVolume(obj, tool_id, z_pos)]
-        
-        subcurves = rs.ExplodeCurves(obj, True)
-        if subcurves:
-            
-            for crv in subcurves:
-                volumes = sweepVolume(crv, tool_id, z_pos)
-                if not volumes or len(volumes) < 1:
-                    rs.MessageBox('Error with %s, %s, %s' % (tool_id, operation, z_pos))
-                for vol in volumes:
-                    subtracts.append( vol )
-        
-        return subtracts
-                 
+    # return [sweepVolume(obj, tool_id, z_pos)]
+    
+    subcurves = rs.ExplodeCurves(obj, False)
+    if subcurves:
+        rs.DeleteObject(obj)
+        for crv in subcurves:
+            volumes = sweepVolume(crv, tool_id, z_pos)
+            if not volumes or len(volumes) < 1:
+                rs.MessageBox('Error with %s, %s, %s' % (tool_id, operation, z_pos))
+            for vol in volumes:
+                subtracts.append( vol )
+    else:
+        volumes = sweepVolume(obj, tool_id, z_pos)
+        if not volumes or len(volumes) < 1:
+            rs.MessageBox('Error with %s, %s, %s' % (tool_id, operation, z_pos))
+        for vol in volumes:
+            subtracts.append( vol )                
+    
+    return subtracts
+             
 def convertToVolumes( objs, material_thickness ):
     invalid_layers =[]
     
@@ -295,19 +301,32 @@ def checkPos(objs):
     rs.DeleteObjects(copies)  
 
 
-def storeDefaultValues(convert_for_biesse, export_clamex_txt):
-    convert_for_biesse  = rs.SetDocumentData("CheckAndExport", "convert_for_biesse", str(convert_for_biesse))
-    export_clamex_txt   = rs.SetDocumentData("CheckAndExport", "export_clamex_txt", str(export_clamex_txt))
-    
+def storeDefaultValues( section, dict):
+    for key in dict:
+        value = dict[key]
+        rs.SetDocumentData(section, key, str(value))
         
-def getDefaultValues(section, value):
-    str_convert_for_biesse  = rs.GetDocumentData(section, "convert_for_biesse")
-    str_export_clamex_txt   = rs.GetDocumentData("CheckAndExport", "export_clamex_txt")
-    
-    convert_for_biesse  = str_convert_for_biesse == 'True'
-    export_clamex_txt   = str_export_clamex_txt == 'True'
-    
-    return (convert_for_biesse, export_clamex_txt)
+def getDefaultValues(dict, section):
+
+    new_dict = {}
+    for key in dict:
+        
+        # copy existing value
+        new_dict[key] = dict[key]
+                
+        str_value = rs.GetDocumentData(section, key)
+        if str_value:
+            if str_value == 'True':
+                new_dict[key] = True
+            elif str_value == 'False':
+                new_dict[key] = False
+            else:
+                try:
+                    new_dict[key] = float(str_value)
+                except:
+                    new_dict[key] = str_value 
+                    
+    return new_dict
         
     
     
@@ -319,16 +338,19 @@ def main():
     objs = rs.GetObjects("select objects to Make3d", 0, True, True)
     if not objs: print "make3d aborted"; return
     
-    # default_thickness =  rs.GetDocumentData('TNM_make3d', 'material_thickness')
-    # if default_thickness:
-        # default_thickness = float( default_thickness )
-    # else:
-        # default_thickness = 18
-    
-    material_thickness = rs.GetReal("Material Thickness", number=18.3)
 
-    # rs.SetDocumentData('TNM_make3d', 'material_thickness', str( material_thickness ) )
         
+    defaults = {
+        'material_thickness':18
+    }
+    defaults = getDefaultValues(defaults, 'TNM_make3d')
+    
+    
+    material_thickness = rs.GetReal("Material Thickness", number=defaults['material_thickness'])
+    
+    storeDefaultValues('TNM_make3d', {'material_thickness':material_thickness} )
+
+    
     
     rs.EnableRedraw(False)
 
@@ -354,15 +376,12 @@ def main():
 
             # copies = ce.joinCurves(copies)
             ce.simplify(copies)
-
+            
             volumes, subtracts = convertToVolumes(copies, material_thickness)
-            
-            return
-            
+                        
             parts = volumes
             
             for subtract in subtracts:
-                print parts   
                 if rs.IsPolysurface(parts[0]) and rs.IsPolysurface(subtract) and rs.IsPolysurfaceClosed(parts[0]) and rs.IsPolysurfaceClosed(subtract):
                     
                     # print parts
@@ -370,6 +389,7 @@ def main():
                     
                     temp_parts =  rs.BooleanDifference(parts, [subtract], False)
                     if temp_parts:
+                        print 'subtract success'
                         rs.DeleteObjects(parts)
                         rs.DeleteObject(subtract)
                         
