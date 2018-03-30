@@ -204,6 +204,8 @@ def makeEngraves(tool_id, operation, z_pos, obj):
             
             for crv in subcurves:
                 volumes = sweepVolume(crv, tool_id, z_pos)
+                if not volumes or len(volumes) < 1:
+                    rs.MessageBox('Error with %s, %s, %s' % (tool_id, operation, z_pos))
                 for vol in volumes:
                     subtracts.append( vol )
         
@@ -253,6 +255,9 @@ def convertToVolumes( objs, material_thickness ):
     
     for layer in myset:
         msg += '- ' + layer + "\n"
+        
+    if len(myset)>0:
+        rs.MessageBox(msg)
     
     return volumes, subtracts
     
@@ -351,12 +356,13 @@ def main():
             ce.simplify(copies)
 
             volumes, subtracts = convertToVolumes(copies, material_thickness)
-            # part =  rs.BooleanDifference(volumes, subtracts)
+            
+            return
             
             parts = volumes
             
             for subtract in subtracts:
-                   
+                print parts   
                 if rs.IsPolysurface(parts[0]) and rs.IsPolysurface(subtract) and rs.IsPolysurfaceClosed(parts[0]) and rs.IsPolysurfaceClosed(subtract):
                     
                     # print parts
