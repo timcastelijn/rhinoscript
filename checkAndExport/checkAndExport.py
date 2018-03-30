@@ -27,11 +27,34 @@ import math
 import re
 import time
 import os
+from subprocess import Popen
+
+# for a in dir(rs):
+    # if "Layer" in a:
+        # print a
+ 
 
 # SCRIPT GLOBALS
 EXPORT_FONT = 'timfont'
 DEBUG_CLAMEX        = True
 DEBUG_FLIPCUVRVE    = False
+
+
+# filename = __file__.replace("\\","//")
+
+print os.path
+
+#add to rhino as an alias
+if not rs.IsAlias("TNM_Export"):
+    rs.AddAlias("TNM_Export",  "'_-runPythonScript \"%s\"" % __file__ )
+    print 'addAlias'
+else:
+    print 'alias could not be added'
+
+
+# print 'addalias', rs.AddAlias("checkAndExport",  "'_-runPythonScript \\"%s\\"" %  )
+ 
+
 
 def redraw():
     rs.EnableRedraw(True)
@@ -204,8 +227,20 @@ def checkCurveIntegrity(objs):
                 selection.append(obj)
                 appendLayer(layers, obj)
                 
+                
+                
                 delete_objs.append( rs.AddPoint( rs.CurveStartPoint(obj)) )
                 delete_objs.append( rs.AddPoint( rs.CurveEndPoint(obj)) )
+                
+                rs.Command("'_printDisplay _state _on _Enter")
+                
+                for i in range(0,3):
+                    temp_circle = rs.AddCircle(rs.WorldXYPlane(), 80.0 * i+1 )
+                    rs.MoveObject(temp_circle, rs.CurveStartPoint(obj))
+                    rs.ObjectPrintWidth(temp_circle,2.0)
+                    delete_objs.append( temp_circle )
+                
+                
 
     if len(selection) > 0:
         rs.SelectObjects(selection)
@@ -281,16 +316,21 @@ def convertTextToPolylines2(obj):
     opts='GroupOutput=No FontName="' + EXPORT_FONT + '" Italic=No Bold=No Height='+ str(ht)
     opts+=" Output=Curves AllowOpenCurves=Yes LowerCaseAsSmallCaps=No AddSpacing=No "
 
-    origin.Y += ht * len(text) - ht*0.35 - 3
+    
+    n_lines = len(text)
+    
+    origin.Y += 1.6 * ht * (len(text) - 1)
 
     polylines=[]
     for item in text:
         rs.Command("_-TextObject " + opts + '"'+item+'"' + " " + str(origin) , False)
         polylines += rs.LastCreatedObjects()
-        origin.Y -= ht *1.6
+        origin.Y -= ht * 1.6
 
     rs.ObjectLayer(polylines, object_layer)
 
+    polylines = rs.ScaleObjects( polylines, (0,0,0), (0.7,1,1), True )
+    
     # transform to old position
     rs.TransformObjects(polylines, matrix, copy=False)
     rs.MoveObjects(polylines, diff)
@@ -304,10 +344,14 @@ def explodeTextObjects(objs):
 
     for obj in objs:
 
-        if rs.IsText(obj) and rs.LayerVisible( rs.ObjectLayer(obj) ):
-            # only export visible layers:
-            polylines = convertTextToPolylines(obj)
-            # polylines = convertTextToPolylines2(obj)
+        if rs.IsText(obj) and rs.LayerVisible( rs.ObjectLayer(obj) ) and ("CNC" in rs.ObjectLayer(obj)):
+            # only explode Text when
+            # - layer visible
+            # - CNC layer
+            
+            
+            # polylines = convertTextToPolylines(ob)
+            polylines = convertTextToPolylines2(obj)
 
             for polyline in polylines:
                 new_list.append(polyline)
@@ -340,12 +384,12 @@ def explodeBlock(objects):
 
             
                 # DIRTY FIX FOR RHINO 5-SR14 522.8390 (5-22-2017)
-                # temp_objs = rs.ExplodeBlockInstance(obj)
+                temp_objs = rs.ExplodeBlockInstance(obj)
 
-                rs.UnselectAllObjects()
-                rs.SelectObject(obj)
-                rs.Command("Explode" , False)
-                temp_objs = rs.LastCreatedObjects()
+                # rs.UnselectAllObjects()
+                # rs.SelectObject(obj)
+                # rs.Command("Explode" , False)
+                # temp_objs = rs.LastCreatedObjects()
                 
                 explode(temp_objs, li)
             else:
@@ -425,7 +469,7 @@ def getClamexVerAngle(obj):
     
     return angle
     
-def createBiesseLayer(layer_name, tool_id, operation, z_pos, c_angle):
+def createBiesseLayer(layer_name, tool_id, operation, z_mode, z_pos, c_angle):
 
     tool_table = importTools("tool_table.txt")
     if not tool_table:
@@ -479,6 +523,7 @@ def createBiesseLayer(layer_name, tool_id, operation, z_pos, c_angle):
         }[operation]
 
     # assign action ID and geometry ID
+    
     action += '(ID)$A%s$' % (layer_name )
     action += '(GID)$G%s$' % (layer_name)
 
@@ -489,22 +534,25 @@ def createBiesseLayer(layer_name, tool_id, operation, z_pos, c_angle):
     else:
         rs.MessageBox( 'tool_id %s not in tool table file or DIA not formatted correctly.' %  (tool_id) )
         return False
-
-    
         
     # depth parameter
-    depth = re.search( 'd(\d+\.?\d*)', z_pos)
-    if depth:
+    if z_mode == "d":
         # depth from top of workpiece
-        action += '(DP)' + depth.group(1)
+        action += '(DP)' + z_pos
     else:
-        if operation ==  'Clamex horizontaal' or operation ==  'Clamex verticaal':
-            action += '(DP)LPZ'
-        elif abs(float(z_pos))<0.0001:
+        # convert sign to float
+        float_z_pos = float(z_mode + z_pos)
+        
+        # depth mode == + | -
+        if operation ==  'Clamex horizontaal':
+            action += '(DP)LPZ'        
+        if operation ==  'Clamex verticaal':
+            action += '(DP)LPZ - 50'
+        elif abs(float_z_pos)<0.0001:
             # set any 0 depth to 0.1
             action += '(DP)LPZ+0.1'
         else:
-            action += '(DP)LPZ-' + z_pos
+            action += '(DP)LPZ-%s' % float_z_pos
             
             
     # tool name paramter
@@ -519,52 +567,70 @@ def createBiesseLayer(layer_name, tool_id, operation, z_pos, c_angle):
     
 def getDefault16():
     tools = [
-        "0.0.1 - 16DIAMANT", 
-        "0.0.2 - 16LANG",
-        "0.0.3 - DIA16SPIRA",
-        "0.0.4 - 16DIAM2",
-        "0.0.5 - 16Z2",
+        "0.0.160.1 - 16DIAMANT", 
+        "0.0.160.2 - 16LANG",
+        "0.0.160.3 - DIA16SPIRA",
+        "0.0.160.4 - 16DIAM2",
+        "0.0.160.5 - 16Z2",
     ]
     
     tool16 = rs.ComboListBox(tools, "generic 16mm is detected. Specify a 16mm tool")
     if tool16: 
-        return tool16[:5]    
-    
+        return tool16[:9]    
+
+def testFunc():
+    rs.MessageBox('testFunc executed')
+        
+def parseLayer(layer_name):
+    # import re
+    # layer_name = "CNC::6.1.000.2 -  Clamex verticaal +0 c-90 dit is een test" 
+    m = re.search(  '(\d\.\d\.\d\d\d\.\d)\s'+
+                    '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal)'+
+                    '\s([-+d])(\d+\.?\d*)'+
+                    '\s*c?(-?\d+)*'
+                , layer_name)
+
+    # print 'convert', m.groups()
+    return m
+        
 def convertLayers( objs ):
     
     # get specific tool if none specified
     tool16 = getDefault16()
     if not tool16: return False
     
+    print 'tool16', tool16
     
     # first find relevant layers
     layers = []
     biesse_layers = []
     for obj in objs:
         layer_name = rs.ObjectLayer(obj)
-        if 'Clamex verticaal' in layer_name: 
+        if '6.1.000.2' in layer_name: 
             # create a layer with clamex c-angle
             layer_name = layer_name + ' c%s' % getClamexVerAngle(obj)
             
             # create a new layer with this name
             if not rs.IsLayer(layer_name):
-                rs.AddLayer(layer_name)
-                biesse_layers.append(layer_name)
-                print layer_name
+                new_layer = rs.AddLayer(layer_name)
+                biesse_layers.append(new_layer)
             
             #add the object to this layer
             rs.ObjectLayer(obj, layer_name)
         
         
-        if '0.0.0' in layer_name:
-            layer_name = layer_name.replace("0.0.0", tool16)
+        if '0.0.160.0' in layer_name:
+            prev_color = rs.LayerColor(layer_name)
+            layer_name = layer_name.replace("0.0.160.0", tool16)
             
             # create a new layer with this name
             if not rs.IsLayer(layer_name):
-                rs.AddLayer(layer_name)
-                biesse_layers.append(layer_name)
+                new_layer = rs.AddLayer(layer_name)
+                
+                # assign layer color
+                rs.LayerColor(layer_name, prev_color)                
+                biesse_layers.append(new_layer)
             
-            print layer_name
             #add the object to this layer
             rs.ObjectLayer(obj, layer_name)
             
@@ -577,24 +643,28 @@ def convertLayers( objs ):
     for layer_name in layers:
         # todo's
         # - add Clamex
-        m = re.search(  '(\d.\d.\d)\s'+
-                        '.+(Pocket|Engrave|Inner contour|Outer contour|Drill|Saw-X|Saw-Y|Clamex horizontaal|Clamex verticaal).+'+
-                        '.+((?<=\s\+)\d+\.?\d*|(?<=\s)d\d+\.?\d*)'+
-                        '\s*c?(-?\d+)*'
-                    , layer_name)
+        
+        m = parseLayer(layer_name)
+        
+        if m and len(m.groups()) >= 4:
 
-        if m and len(m.groups()) >= 3:
+            print 'convert', m.groups()
         
             tool_id     = m.group(1)
             operation   = m.group(2)
-            depth       = m.group(3)
-            c_angle     = m.group(4) or None
+            z_mode      = m.group(3)
+            depth       = m.group(4)
+            c_angle     = m.group(5) or None
+            
+            stripped_layer_name = layer_name.split("::")[-1]
 
-            action_layer_name = createBiesseLayer(layer_name, tool_id, operation, depth, c_angle)
+
+            action_layer_name = createBiesseLayer(stripped_layer_name, tool_id, operation, z_mode, depth, c_angle)
 
             if action_layer_name:
+            
                 # create new geo layer
-                geo_layer_name = 'TCH[GEO](ID)$G%s$' % (layer_name)
+                geo_layer_name = 'TCH[GEO](ID)$G%s$' % (stripped_layer_name)
 
                 rs.AddLayer( action_layer_name )
                 rs.AddLayer( geo_layer_name )
@@ -605,6 +675,9 @@ def convertLayers( objs ):
 
                 rs.LayerColor(geo_layer_name, rs.LayerColor(layer_name))
                 rs.LayerColor(action_layer_name, rs.LayerColor(layer_name))
+                
+                print 'convert', action_layer_name
+                print ' '
 
                 # move objects to new geo layer
                 for obj in objs:
@@ -618,8 +691,10 @@ def convertLayers( objs ):
 
 
             else:
-                return False
+                print 'could not convert', action_layer_name
+
         else:
+            print 'skip ' + layer_name
             invalid_lines += '- ' + layer_name + '\n'
 
     if len(invalid_lines)>0:
@@ -642,9 +717,9 @@ def importTools(filename):
         cnt = 1
         while line:
             # print line
-            m = re.search(  '(\d.\d.\d)\t'+
-                '(.+)\t'+
-                '(.+)'
+            m = re.search(  '(\d\.\d\.\d\d\d\.\d),'+
+                '(.+),'+
+                '(.+),?'
                 , line)
             if m and len(m.groups())>=3:
                 tool_table[m.group(1)] = {"TNM":m.group(2), "DIA":m.group(3)}
@@ -719,19 +794,22 @@ def extractClamexOrientation(objs):
     if result:         
         return data
 
-def storeDefaultValues(convert_for_biesse, export_clamex_txt):
+def storeDefaultValues(convert_for_biesse, export_clamex_txt, open_after_export):
     convert_for_biesse  = rs.SetDocumentData("CheckAndExport", "convert_for_biesse", str(convert_for_biesse))
     export_clamex_txt   = rs.SetDocumentData("CheckAndExport", "export_clamex_txt", str(export_clamex_txt))
+    open_after_export   = rs.SetDocumentData("CheckAndExport", "open_after_export", str(open_after_export))
     
         
 def getDefaultValues():
     str_convert_for_biesse  = rs.GetDocumentData("CheckAndExport", "convert_for_biesse")
     str_export_clamex_txt   = rs.GetDocumentData("CheckAndExport", "export_clamex_txt")
+    open_after_export       = rs.GetDocumentData("CheckAndExport", "open_after_export")
     
     convert_for_biesse  = str_convert_for_biesse == 'True'
     export_clamex_txt   = str_export_clamex_txt == 'True'
+    open_after_export   = open_after_export == 'True'
     
-    return (convert_for_biesse, export_clamex_txt)
+    return (convert_for_biesse, export_clamex_txt, open_after_export)
 
 # joins all curves in the same layer    
 def joinCurves(copies):
@@ -775,6 +853,7 @@ def main():
     items = (
         ['convert_to_biesse_layers', 'no', 'yes'],
         ['export_clamex_txt', 'no', 'yes'],
+        ['open_after_export', 'no', 'yes'],
     )
     
     
@@ -788,8 +867,9 @@ def main():
  
     convert_for_biesse  = options[0]
     export_clamex_txt   = options[1]
+    open_after_export   = options[2]
 
-    storeDefaultValues(convert_for_biesse, export_clamex_txt )
+    storeDefaultValues(convert_for_biesse, export_clamex_txt, open_after_export )
 
     
     # get objects to export
@@ -852,10 +932,17 @@ def main():
 
                 redraw()
 
-                filename = rs.SaveFileName ("Save", "Text Files (*.dxf)|*.dxf||")
+                filename = rs.SaveFileName ("Save", "dxf Files (*.dxf)|*.dxf||")
                 if filename: 
                 
                     result = rs.Command('! _-Export "' + filename  +'" _Enter', False )
+                    
+                    if open_after_export:
+                        if os.path.isfile('C:\Program Files\Rhinoceros 5 (64-bit)\System\Rhino.exe'): 
+                            print( '"C:\Program Files\Rhinoceros 5 (64-bit)\System\Rhino.exe" /nosplash /runscript="_-open ""' + filename +'"" _Enter"')
+                            Popen( '"C:\Program Files\Rhinoceros 5 (64-bit)\System\Rhino.exe" /nosplash /runscript="_-open ""' + filename +'"" _Enter"')
+                        else:
+                            rs.MessageBox('dxf cannot be openened automatically. Could not find:\nC:\Program Files\Rhinoceros 5 (64-bit)\System\Rhino.exe')
                     
                     filename_stripped, file_extension = os.path.splitext(filename)
                     
@@ -875,7 +962,7 @@ def main():
 
     rs.DeleteObjects(copies)
 
-    if len(biesse_layers)>0:
+    if biesse_layers and len(biesse_layers)>0:
         for layer in biesse_layers:
             rs.PurgeLayer(layer)
 

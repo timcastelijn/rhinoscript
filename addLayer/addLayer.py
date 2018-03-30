@@ -12,6 +12,14 @@ import os
 from subprocess import check_output
 
 
+#add to rhino as an alias
+if not rs.IsAlias("TNM_addLayer"):
+    rs.AddAlias("TNM_addLayer",  "'_-runPythonScript \"%s\"" % __file__ )
+    print 'addAlias'
+else:
+    print 'alias could not be added'
+
+
 # Our custom form class
 class AnnotateForm(Form):
   # build all of the controls in the constructor

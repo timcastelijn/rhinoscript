@@ -1,0 +1,9 @@
+import rhinoscriptsyntax as rs
+import Rhino
+import scriptcontext as sc
+import math
+import re
+import time
+import os
+
+for layer_name in rs.GetLayers():
