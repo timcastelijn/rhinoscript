@@ -67,12 +67,6 @@ def iterateBlocks(objects):
     #redeclare objects list with content of exploded blocks
     return explode(objects, li)
 
-
-def simplify(objs):
-    for obj in objs:
-        if rs.IsCurve(obj):
-            rs.SimplifyCurve(obj)
-
 def createPockets(tool_id, operation, z_pos, obj):
 
     if operation == 'Inner contour' or operation == 'Pocket' or operation=='Drill':
@@ -94,6 +88,8 @@ def sweepVolume(crv, tool_id, z_pos):
     tangent = rs.CurveTangent(crv, rs.CurveParameter(crv, 0))
     origin = rs.CurveStartPoint(crv)
     
+    
+
     block = rs.InsertBlock( 'T_' + tool_id, (0,0,0), scale=(1,1,1) )
     
 
@@ -153,23 +149,26 @@ def sweepVolume(crv, tool_id, z_pos):
     # METHOD1
     surface_id = rs.AddSweep1( crv, profile, True )    
 
-    rs.CapPlanarHoles(surface_id)
     
-    pt = rs.CurveAreaCentroid(profile)[0]
-    pt2 = (pt.X, pt.Y, pt.Z+1)
-    
-    rev = rs.AddRevSrf( profile, (pt, pt2) )
-    
-
-    rs.MoveObject(rev, (0,0,z_pos))  
-    rs.MoveObject(surface_id, (0,0,z_pos)) 
+    rs.CapPlanarHoles(surface_id[0])
+    rs.MoveObject(surface_id[0], (0,0,z_pos)) 
 
     
-    rs.CapPlanarHoles(surface_id)
+    # pt = rs.CurveAreaCentroid(profile)[0]
+    # pt2 = (pt.X, pt.Y, pt.Z+1)
+    
+    # rev = rs.AddRevSrf( profile, (pt, pt2) )
+    # rs.MoveObject(rev, (0,0,z_pos))  
+    # if rev:
+        # surface_id.append(rev)
     
     
+    # volume = rs.BooleanUnion(surface_id)
+    # return volume
     
-    return [surface_id]        
+    rs.DeleteObject(profile)
+
+    return surface_id
 
     
     
@@ -195,7 +194,20 @@ def makeEngraves(tool_id, operation, z_pos, obj):
     p1 = rs.WorldXYPlane()
     rs.ViewCPlane(None, p1)
             
-    return sweepVolume(obj, tool_id, z_pos)
+    subtracts = []        
+    if operation == 'Engrave':
+        
+        # return [sweepVolume(obj, tool_id, z_pos)]
+        
+        subcurves = rs.ExplodeCurves(obj, True)
+        if subcurves:
+            
+            for crv in subcurves:
+                volumes = sweepVolume(crv, tool_id, z_pos)
+                for vol in volumes:
+                    subtracts.append( vol )
+        
+        return subtracts
                  
 def convertToVolumes( objs, material_thickness ):
     invalid_layers =[]
@@ -211,7 +223,7 @@ def convertToVolumes( objs, material_thickness ):
         
         m = ce.parseLayer(layer_name)
 
-        if m and len(m.groups()) > 4:
+        if m and len(m.groups()) > 4 and not rs.IsText(obj):
             tool_id     = m.group(1)
             operation   = m.group(2)
             z_pos       = float(m.group(3) + m.group(4))
@@ -319,23 +331,49 @@ def main():
 
     set_volumes = []
     set_subtracts = []
-        
+    
+    
+    fail_objects =[]
+
     for obj in objs:
         if rs.IsBlockInstance(obj):   
             
             # get content
             copy = rs.CopyObject(obj)
             content = ce.explodeBlock( [copy] )
-            
+                        
             # filter objects to only curves and points
             copies = ce.filterObjects(content) 
+            
+            copies = ce.joinCurves(copies)
 
-            simplify(copies)
+            # copies = ce.joinCurves(copies)
+            ce.simplify(copies)
 
             volumes, subtracts = convertToVolumes(copies, material_thickness)
+            # part =  rs.BooleanDifference(volumes, subtracts)
             
+            parts = volumes
             
-            part =  rs.BooleanDifference(volumes, subtracts)
+            for subtract in subtracts:
+                   
+                if rs.IsPolysurface(parts[0]) and rs.IsPolysurface(subtract) and rs.IsPolysurfaceClosed(parts[0]) and rs.IsPolysurfaceClosed(subtract):
+                    
+                    # print parts
+                    # print subtract
+                    
+                    temp_parts =  rs.BooleanDifference(parts, [subtract], False)
+                    if temp_parts:
+                        rs.DeleteObjects(parts)
+                        rs.DeleteObject(subtract)
+                        
+                        parts = temp_parts
+                    else:
+                        print 'boolean differce failed on: %s' % subtract
+                        fail_objects.append(subtract)
+                else:
+                    print 'boolean differce failed on: %s' % subtract
+                    fail_objects.append(subtract)
 
             
             # addResultToBlock(obj, result)
@@ -343,8 +381,10 @@ def main():
         else:
             # add warning message collision check
             print obj
-    
+
     rs.UnselectAllObjects()
+    rs.SelectObjects(fail_objects)
+    
     intersect = None
     # for i, volume in enumerate(set_volumes):
         # for j, subtracts in enumerate(set_subtracts):
@@ -363,11 +403,10 @@ def main():
     
     if intersect:
         rs.MessageBox("ERROR")
-
         
-    ce.redraw()
-
     rs.DeleteObjects(copies)
+    
+    ce.redraw()
                 
             
 if __name__ == "__main__":
